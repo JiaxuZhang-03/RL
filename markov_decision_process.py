@@ -33,3 +33,55 @@ def compute(P,rewards,gamma,states_num):
 
 V = compute(P,rewards,gamma,6)
 print("Every value in the MRP state is \n",V)
+
+
+def sample(MDP,Pi,timestep_max,number):
+    S,A,P,R, gamma = MDP
+    episodes = []
+    for _ in range(number):
+        episode = []
+        timestep = 0
+        s = S[np.random.randint(4)]
+        while s != "s5" and timestep < timestep_max:
+            timestep += 1
+            rand,temp = np.random.rand(),0
+            for a_opt in A:
+                temp += Pi.get((s,a_opt),0)
+                if temp > rand:
+                    a = a_opt
+                    r = R.get((s,a),0)
+            rand,temp = np.random.rand(),0
+            for s_opt in S:
+                temp += P.get((s,a,s_opt),0)
+                if temp > rand:
+                    s_next = s_opt
+                    break
+            episode.append((s,a,r,s_next))
+            s = s_next
+        episodes.append(episode)
+    return episodes
+
+
+def MC(episodes,V,N,gamma):
+    for episode in episodes:
+        G = 0
+        for i in range(len(episode)-1,-1,-1):
+            (s,a,r,s_next) = episode[i]
+            G = r + gamma * G
+            N[s] = N[s] + 1
+            V[s] = V[s] + (G-V[s])/N[s]
+    
+def occupancy(episodes,s,a,timestep_max,gamma):
+    rho = 0
+    total_times = np.zeros(timestep_max)
+    occur_times = np.zeros(timestep_max)
+    for episode in episodes:
+        for i in range(len(episode)):
+            (s_opt,a_opt,r,s_next) = episode[i]
+            total_times[i] += 1
+            if s==s_opt and a==a_opt:
+                occur_times[i] += 1
+    for i in reversed(range(timestep_max)):
+        if total_times[i]:
+            rho += gamma**i * occur_times[i]/total_times[i] # Using Frequency as Prob
+    return (1-gamma)*rho
