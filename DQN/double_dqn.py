@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import rl_utils
+import TRPO.rl_utils as rl_utils
 from tqdm import tqdm
 
 class Qnet(torch.nn.Module):

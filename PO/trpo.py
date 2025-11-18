@@ -131,6 +131,12 @@ class TRPO:
         self.critic_optimizer.step()
         self.policy_learn(states,actions,old_action_dists,old_log_probs,advantage)
 
+# For the Continuous State - Pendulum-v1
+class PolicyNetContinuous:
+    pass
+
+
+
 
 if __name__ == "__main__":
     num_episodes = 500
