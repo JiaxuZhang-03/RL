@@ -6,7 +6,7 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import TRPO.rl_utils as rl_utils
+import rl_utils as rl_utils
 
 class ReplayBuffer:
     def __init__(self,capacity):

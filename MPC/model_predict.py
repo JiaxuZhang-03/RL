@@ -171,4 +171,110 @@ class EnsembleDynamicsModel:
 
 
 
+class FakeEnv:
+    def __init__(self,model):
+        self.model = model
+    def step(self,obs,act):
+        inputs = np.concatenate((obs,act),axis = -1)
+        ensemble_model_means,ensemble_model_vars = self.model.predict(inputs)
+        ensemble_model_means[:,:,1:] += obs.numpy()
+        ensemble_model_stds = np.sqrt(ensemble_model_vars)
+        ensemble_samples = ensemble_model_means + np.random.normal(size=ensemble_model_means.shape) * ensemble_model_stds
+        num_models,batch_size, _ = ensemble_model_means.shape
+
+        models_to_use = np.random.choice([i for i in range(self.model._num_network)],size = batch_size)
+        batch_inds = np.arange(0,batch_size)
+        samples = ensemble_samples[models_to_use,batch_inds]
+        rewards, next_obs = samples[:,:1],samples[:,1:]
+        return rewards,next_obs
     
+    def propagate(self,obs,actions):
+        with torch.no_grad():
+            obs = np.copy(obs)
+            total_reward = np.expand_dims(np.zeros(obs.shape[0]),axis = -1)
+            obs,actions = torch.as_tensor(obs),torch.as_tensor(actions)
+            for i in range(actions.shape[1]):
+                action = torch.unsqueeze(actions[:,i],1)
+                rewards,next_obs = self.step(obs,action)
+                total_reward += rewards
+                obs = torch.as_tensor(next_obs)
+        return total_reward
+    
+class ReplayBuffer:
+    def __init__(self,capacity):
+        self.buffer = collections.deque(maxlen = capacity)
+    
+    def add(self,state,action,reward,next_state,done):
+        self.buffer.append((state,action,reward,next_state,done))
+    def size(self):
+        return len(self.buffer)
+    def return_all_samples(self):
+        all_transitions = list(self.buffer)
+        state,action,reward,next_state,done = zip(*all_transitions)
+        return np.array(state),action,reward,np.array(next_state),done
+
+
+class PETS:
+    # PETS Algo
+
+    def __init__(self,env,replay_buffer,n_sequence,elite_ratio,plan_horizon,num_episodes):
+        self._env = env
+        self._env_pool = replay_buffer
+        obs_dim = env.observation_space.shape[0]
+        self._action_dim = env.action_space.shape[0]
+        self._model = EnsembleDynamicsModel(obs_dim,self._action_dim)
+        self._fake_env = FakeEnv(self._model)
+        self.upper_bound = env.action_space.high[0]
+        self.lower_bound = env.action_space.low[0]
+        self._cem = CEM(n_sequence,elite_ratio,self._fake_env,self.upper_bound,self.lower_bound)
+        self.plan_horizon = plan_horizon
+        self.num_episodes = num_episodes
+
+    def train_model(self):
+        env_samples = self._env_pool.return_all_samples()
+        obs = env_samples[0]
+        actions = np.array(env_samples[1])
+        rewards = np.array(env_samples[2]).reshape(-1,1)
+        next_obs = np.array(env_samples[3])
+        inputs = np.concatenate((obs,actions),axis = -1)
+        labels = np.concatenate((rewards,next_obs-obs),axis = -1)
+        self._model.train(inputs,labels)
+    def mpc(self):
+        mean = np.tile((self.upper_bound+self.lower_bound)/2.0,self.plan_horizon)
+        var = np.tile(np.square(self.upper_bound-self.lower_bound)/16,self.plan_horizon)
+        obs,done,episode_return = self._env.reset(),False,0
+        while not done:
+            actions = self._cem.optimize(obs,mean,var)
+            action = actions[:self._action_dim]
+            next_obs,reward,done,_ = self._env.step(action)
+            self._env_pool.add(obs,action,reward,next_obs)
+            obs = next_obs
+            episode_return += reward
+            mean = np.concatenate([np.copy(actions)[self._action_dim],np.zeros(self._action_dim)])
+        return episode_return
+    
+    def explore(self):
+        obs,done,episode_return = self._env.reset(),False,0
+        while not done:
+            action = self._env.action_space.sample()
+            next_obs,reward,done,_ = self._env.step(action)
+            self._env_pool.add(obs,action,reward,next_obs,done)
+            obs = next_obs
+            episode_return += reward
+        return episode_return
+    
+    def train(self):
+        return_list = []
+        explore_return = self.explore()
+        print("episode:1,return:%d"%explore_return)
+        return_list.append(explore_return)
+        for i_episode in range(self.num_episodes-1):
+            self.train_model()
+            episode_return = self.mpc()
+            return_list.append(episode_return)
+            print("episode:%d,return:%d" % (i_episode+2,episode_return))
+        return return_list
+    
+    
+
+
